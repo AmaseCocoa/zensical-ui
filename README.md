@@ -9,3 +9,4 @@ Templates for [Zensical].
 > for [Zensical] as a first step towards modularization.
 
 [Zensical]: https://zensical.org
+
