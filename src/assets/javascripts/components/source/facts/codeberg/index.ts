@@ -23,77 +23,78 @@
  * IN THE SOFTWARE.
  */
 
-import { EMPTY, Observable } from "rxjs"
+import { Repo } from "github-types"
+import {
+  EMPTY,
+  Observable,
+  catchError,
+  defaultIfEmpty,
+  map,
+  zip
+} from "rxjs"
 
-import { fetchSourceFactsFromGitHub } from "../github"
-import { fetchSourceFactsFromGitLab } from "../gitlab"
-import { fetchSourceFactsFromCodeberg } from '../codeberg'
+import { requestJSON } from "~/browser"
+
+import { SourceFacts } from "../_"
 
 /* ----------------------------------------------------------------------------
- * Types
+ * Helper types
  * ------------------------------------------------------------------------- */
 
 /**
- * Repository facts for repositories
+ * Codeberg release (partial)
  */
-export interface RepositoryFacts {
-  stars?: number                       // Number of stars
-  forks?: number                       // Number of forks
-  version?: string                     // Latest version
+interface Release {
+  tag_name: string                     // Tag name
 }
-
-/**
- * Repository facts for organizations
- */
-export interface OrganizationFacts {
-  repositories?: number                // Number of repositories
-}
-
-// -------------------------------------------------------------------------
-
-/**
- * Repository facts
- */
-export type SourceFacts =
-  | RepositoryFacts
-  | OrganizationFacts
 
 /* ----------------------------------------------------------------------------
  * Functions
  * ------------------------------------------------------------------------- */
 
 /**
- * Fetch repository facts
+ * Fetch Codeberg repository facts
  *
- * @param url - Repository URL
+ * @param user - Codeberg user or organization
+ * @param repo - Codeberg repository
  *
  * @returns Repository facts observable
  */
-export function fetchSourceFacts(
-  url: string
+export function fetchSourceFactsFromCodeberg(
+  user: string, repo?: string
 ): Observable<SourceFacts> {
+  if (typeof repo !== "undefined") {
+    const url = `https://codeberg.org/api/v1/repos/${user}/${repo}`
+    return zip(
 
-  // Try to match Codeberg repository
-  let match = url.match(/^.+codeberg\.org\/([^/]+)\/?([^/]+)?/i)
-  if (match) {
-    const [, user, repo] = match
-    return fetchSourceFactsFromCodeberg(user, repo)
-  }
-  
-  // Try to match GitHub repository
-  match = url.match(/^.+github\.com\/([^/]+)\/?([^/]+)?/i)
-  if (match) {
-    const [, user, repo] = match
-    return fetchSourceFactsFromGitHub(user, repo)
-  }
+      // Fetch version
+      requestJSON<Release>(`${url}/releases/latest`)
+        .pipe(
+          catchError(() => EMPTY), // @todo refactor instant loading
+          map(release => ({
+            version: release.tag_name
+          })),
+          defaultIfEmpty({})
+        ),
 
-  // Try to match GitLab repository
-  match = url.match(/^.+?([^/]*gitlab[^/]+)\/(.+?)\/?$/i)
-  if (match) {
-    const [, base, slug] = match
-    return fetchSourceFactsFromGitLab(base, slug)
-  }
+      // Fetch stars and forks
+      requestJSON<Repo>(url)
+        .pipe(
+          catchError(() => EMPTY), // @todo refactor instant loading
+          map(info => ({
+            stars: info.stargazers_count,
+            forks: info.forks_count
+          })),
+          defaultIfEmpty({})
+        )
+    )
+      .pipe(
+        map(([release, info]) => ({ ...release, ...info }))
+      )
 
-  // Fallback
-  return EMPTY
+  // User or organization
+  } else {
+    // Codeberg hasn't provide user repository count?
+    return EMPTY
+  }
 }
